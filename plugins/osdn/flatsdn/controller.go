@@ -13,13 +13,23 @@ import (
 )
 
 type FlowController struct {
+	nodeIP     string
+	nodeMAC    string
+	nodeSubnet *net.IPNet
 }
 
 func NewFlowController() *FlowController {
 	return &FlowController{}
 }
 
-func (c *FlowController) Setup(localSubnetCIDR, clusterNetworkCIDR, servicesNetworkCIDR string, mtu uint) error {
+func (c *FlowController) Setup(nodeIP, localSubnetCIDR, clusterNetworkCIDR, servicesNetworkCIDR string, mtu uint) error {
+	var err error
+	c.nodeIP = nodeIP
+	c.nodeSubnet, err = netutils.GetNodeSubnet(nodeIP)
+	if err != nil {
+		return err
+	}
+
 	_, ipnet, err := net.ParseCIDR(localSubnetCIDR)
 	localSubnetMaskLength, _ := ipnet.Mask.Size()
 	localSubnetGateway := netutils.GenerateDefaultGateway(ipnet).String()
@@ -37,6 +47,12 @@ func (c *FlowController) Setup(localSubnetCIDR, clusterNetworkCIDR, servicesNetw
 		log.Errorf("Error executing setup script. \n\tOutput: %s\n\tError: %v\n", out, err)
 		return err
 	}
+
+	c.nodeMAC, err = netutils.GetInterfaceMAC("tun0")
+	if err != nil {
+		return err
+	}
+
 	_, err = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0").CombinedOutput()
 	if err != nil {
 		return err
@@ -49,14 +65,24 @@ func (c *FlowController) Setup(localSubnetCIDR, clusterNetworkCIDR, servicesNetw
 	return err
 }
 
-func (c *FlowController) AddOFRules(nodeIP, nodeSubnetCIDR, localIP string) error {
+func (c *FlowController) AddOFRules(nodeIP, nodeSubnetCIDR string) error {
 	cookie := generateCookie(nodeIP)
-	if nodeIP == localIP {
+	if nodeIP == c.nodeIP {
 		// self, so add the input rules for containers that are not processed through kube-hooks
 		// for the input rules to pods, see the kube-hook
 		iprule := fmt.Sprintf("table=0,cookie=0x%s,priority=75,ip,nw_dst=%s,actions=output:9", cookie, nodeSubnetCIDR)
 		arprule := fmt.Sprintf("table=0,cookie=0x%s,priority=75,arp,nw_dst=%s,actions=output:9", cookie, nodeSubnetCIDR)
 		o, e := exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", iprule).CombinedOutput()
+		log.Infof("Output of adding %s: %s (%v)", iprule, o, e)
+		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", arprule).CombinedOutput()
+		log.Infof("Output of adding %s: %s (%v)", arprule, o, e)
+		return e
+	} else if c.nodeMAC != "" && c.nodeSubnet.Contains(net.ParseIP(nodeIP)) {
+		o, e := exec.Command("ip", "route", "add", nodeSubnetCIDR, "via", nodeIP).CombinedOutput()
+		log.Infof("Output of adding ip route: %s (%v)", o, e)
+		iprule := fmt.Sprintf("table=0,cookie=0x%s,priority=100,ip,nw_dst=%s,actions=set_field:%s->eth_dst,output:2", cookie, nodeSubnetCIDR, c.nodeMAC)
+		arprule := fmt.Sprintf("table=0,cookie=0x%s,priority=100,arp,nw_dst=%s,actions=set_field:%s->tun_dst,output:1", cookie, nodeSubnetCIDR, nodeIP)
+		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", iprule).CombinedOutput()
 		log.Infof("Output of adding %s: %s (%v)", iprule, o, e)
 		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", arprule).CombinedOutput()
 		log.Infof("Output of adding %s: %s (%v)", arprule, o, e)
@@ -73,27 +99,20 @@ func (c *FlowController) AddOFRules(nodeIP, nodeSubnetCIDR, localIP string) erro
 	return nil
 }
 
-func (c *FlowController) DelOFRules(nodeIP, localIP string) error {
+func (c *FlowController) DelOFRules(nodeIP, nodeSubnetCIDR string) error {
 	log.Infof("Calling del rules for %s", nodeIP)
 	cookie := generateCookie(nodeIP)
-	if nodeIP == localIP {
-		iprule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff,ip,in_port=10", cookie)
-		arprule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff,arp,in_port=10", cookie)
-		o, e := exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0", iprule).CombinedOutput()
-		log.Infof("Output of deleting local ip rules %s (%v)", o, e)
-		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0", arprule).CombinedOutput()
-		log.Infof("Output of deleting local arp rules %s (%v)", o, e)
-		return e
-	} else {
-		iprule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff,ip", cookie)
-		arprule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff,arp", cookie)
-		o, e := exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0", iprule).CombinedOutput()
-		log.Infof("Output of deleting %s: %s (%v)", iprule, o, e)
-		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0", arprule).CombinedOutput()
-		log.Infof("Output of deleting %s: %s (%v)", arprule, o, e)
-		return e
+	if c.nodeSubnet.Contains(net.ParseIP(nodeIP)) {
+		o, e := exec.Command("ip", "route", "delete", nodeSubnetCIDR, "via", nodeIP).CombinedOutput()
+		if e != nil {
+			log.Infof("Output of deleting ip route (ignored): %s (%v)", o, e)
+		}
 	}
-	return nil
+
+	rule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff", cookie)
+	o, e := exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0", rule).CombinedOutput()
+	log.Infof("Output of deleting flows: %s (%v)", o, e)
+	return e
 }
 
 func generateCookie(ip string) string {

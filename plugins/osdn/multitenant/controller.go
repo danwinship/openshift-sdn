@@ -14,13 +14,15 @@ import (
 )
 
 type FlowController struct {
+	nodeIP string
 }
 
 func NewFlowController() *FlowController {
 	return &FlowController{}
 }
 
-func (c *FlowController) Setup(localSubnetCIDR, clusterNetworkCIDR, servicesNetworkCIDR string, mtu uint) error {
+func (c *FlowController) Setup(nodeIP, localSubnetCIDR, clusterNetworkCIDR, servicesNetworkCIDR string, mtu uint) error {
+	c.nodeIP = nodeIP
 	_, ipnet, err := net.ParseCIDR(localSubnetCIDR)
 	localSubnetMaskLength, _ := ipnet.Mask.Size()
 	localSubnetGateway := netutils.GenerateDefaultGateway(ipnet).String()
@@ -41,8 +43,8 @@ func (c *FlowController) Setup(localSubnetCIDR, clusterNetworkCIDR, servicesNetw
 	return nil
 }
 
-func (c *FlowController) AddOFRules(nodeIP, nodeSubnetCIDR, localIP string) error {
-	if nodeIP == localIP {
+func (c *FlowController) AddOFRules(nodeIP, nodeSubnetCIDR string) error {
+	if nodeIP == c.nodeIP {
 		return nil
 	}
 
@@ -56,8 +58,8 @@ func (c *FlowController) AddOFRules(nodeIP, nodeSubnetCIDR, localIP string) erro
 	return e
 }
 
-func (c *FlowController) DelOFRules(nodeIP, localIP string) error {
-	if nodeIP == localIP {
+func (c *FlowController) DelOFRules(nodeIP, nodeSubnetCIDR string) error {
+	if nodeIP == c.nodeIP {
 		return nil
 	}
 

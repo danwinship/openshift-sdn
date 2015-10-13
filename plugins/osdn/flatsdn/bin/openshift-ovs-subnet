@@ -62,12 +62,6 @@ del_ovs_flows() {
     ovs-ofctl -O OpenFlow13 del-flows br0 "table=0,cookie=0x${ovs_port}/0xffffffff"
 }
 
-add_subnet_route() {
-    source /etc/openshift-sdn/config.env
-    local subnet_route="ip route add ${OPENSHIFT_CLUSTER_SUBNET} dev eth0 proto kernel scope link src $ipaddr"
-    nsenter -n -t $pid -- $subnet_route
-}
-
 Init() {
     true
 }
@@ -76,7 +70,6 @@ Setup() {
     get_ipaddr_pid_veth
     add_ovs_port
     add_ovs_flows
-    add_subnet_route
 }
 
 Teardown() {

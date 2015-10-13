@@ -26,7 +26,8 @@ type PluginHooks interface {
 type OvsController struct {
 	pluginHooks     PluginHooks
 	Registry        *Registry
-	localIP         string
+	nodeIP          string
+	nodeNetwork     *net.IPNet
 	localSubnet     *api.Subnet
 	hostName        string
 	subnetAllocator *netutils.SubnetAllocator
@@ -40,10 +41,10 @@ type OvsController struct {
 }
 
 type FlowController interface {
-	Setup(localSubnetCIDR, clusterNetworkCIDR, serviceNetworkCIDR string, mtu uint) error
+	Setup(nodeIP, localSubnetCIDR, clusterNetworkCIDR, serviceNetworkCIDR string, mtu uint) error
 
-	AddOFRules(nodeIP, nodeSubnetCIDR, localIP string) error
-	DelOFRules(nodeIP, localIP string) error
+	AddOFRules(nodeIP, nodeSubnetCIDR string) error
+	DelOFRules(nodeIP, nodeSubnetCIDR string) error
 
 	AddServiceOFRules(netID uint, IP string, protocol api.ServiceProtocol, port uint) error
 	DelServiceOFRules(netID uint, IP string, protocol api.ServiceProtocol, port uint) error
@@ -69,11 +70,16 @@ func (oc *OvsController) BaseInit(registry *Registry, flowController FlowControl
 		}
 	}
 	log.Infof("Self IP: %s.", selfIP)
+	selfNet, err := netutils.GetNodeSubnet(selfIP)
+	if err != nil {
+		return err
+	}
 
 	oc.pluginHooks = pluginHooks
 	oc.Registry = registry
 	oc.flowController = flowController
-	oc.localIP = selfIP
+	oc.nodeIP = selfIP
+	oc.nodeNetwork = selfNet
 	oc.hostName = hostname
 	oc.VNIDMap = make(map[string]uint)
 	oc.sig = make(chan struct{})

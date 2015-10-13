@@ -113,7 +113,7 @@ func (oc *OvsController) SubnetStartNode(mtu uint) error {
 		log.Errorf("Failed to obtain ServicesNetwork: %v", err)
 		return err
 	}
-	err = oc.flowController.Setup(oc.localSubnet.SubnetCIDR, clusterNetworkCIDR, servicesNetworkCIDR, mtu)
+	err = oc.flowController.Setup(oc.nodeIP, oc.localSubnet.SubnetCIDR, clusterNetworkCIDR, servicesNetworkCIDR, mtu)
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func (oc *OvsController) SubnetStartNode(mtu uint) error {
 	}
 	subnets := result.([]api.Subnet)
 	for _, s := range subnets {
-		oc.flowController.AddOFRules(s.NodeIP, s.SubnetCIDR, oc.localIP)
+		oc.flowController.AddOFRules(s.NodeIP, s.SubnetCIDR)
 	}
 
 	return nil
@@ -208,10 +208,10 @@ func watchSubnets(oc *OvsController, ready chan<- bool, start <-chan string) {
 			switch ev.Type {
 			case api.Added:
 				// add openflow rules
-				oc.flowController.AddOFRules(ev.Subnet.NodeIP, ev.Subnet.SubnetCIDR, oc.localIP)
+				oc.flowController.AddOFRules(ev.Subnet.NodeIP, ev.Subnet.SubnetCIDR)
 			case api.Deleted:
 				// delete openflow rules meant for the node
-				oc.flowController.DelOFRules(ev.Subnet.NodeIP, oc.localIP)
+				oc.flowController.DelOFRules(ev.Subnet.NodeIP, ev.Subnet.SubnetCIDR)
 			}
 		case <-oc.sig:
 			stop <- true
