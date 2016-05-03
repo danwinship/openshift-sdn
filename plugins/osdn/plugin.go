@@ -159,7 +159,7 @@ func (plugin *OsdnNode) SetUpPod(namespace string, name string, id kubeletTypes.
 		return err
 	}
 
-	pod, err := plugin.Registry.GetPod(plugin.HostName, namespace, name)
+	pod, err := plugin.registry.GetPod(plugin.hostName, namespace, name)
 	if err != nil {
 		return err
 	}
