@@ -158,7 +158,7 @@ func (oc *OsdnController) updatePodNetwork(namespace string, netID uint) error {
 		return err
 	}
 	for _, pod := range pods {
-		err := oc.pluginHooks.UpdatePod(pod.Namespace, pod.Name, kubetypes.DockerID(GetPodContainerID(&pod)))
+		err := oc.UpdatePod(pod.Namespace, pod.Name, kubetypes.DockerID(GetPodContainerID(&pod)))
 		if err != nil {
 			return err
 		}
@@ -171,10 +171,10 @@ func (oc *OsdnController) updatePodNetwork(namespace string, netID uint) error {
 	}
 	errList := []error{}
 	for _, svc := range services {
-		if err := oc.pluginHooks.DeleteServiceRules(&svc); err != nil {
+		if err := oc.DeleteServiceRules(&svc); err != nil {
 			log.Error(err)
 		}
-		if err := oc.pluginHooks.AddServiceRules(&svc, netID); err != nil {
+		if err := oc.AddServiceRules(&svc, netID); err != nil {
 			errList = append(errList, err)
 		}
 	}
@@ -264,7 +264,7 @@ func (oc *OsdnController) watchServices() {
 				if !isServiceChanged(oldsvc, serv) {
 					continue
 				}
-				if err := oc.pluginHooks.DeleteServiceRules(oldsvc); err != nil {
+				if err := oc.DeleteServiceRules(oldsvc); err != nil {
 					log.Error(err)
 				}
 			}
@@ -275,7 +275,7 @@ func (oc *OsdnController) watchServices() {
 				continue
 			}
 
-			if err := oc.pluginHooks.AddServiceRules(serv, netid); err != nil {
+			if err := oc.AddServiceRules(serv, netid); err != nil {
 				log.Error(err)
 				continue
 			}
@@ -283,7 +283,7 @@ func (oc *OsdnController) watchServices() {
 		case watch.Deleted:
 			delete(services, string(serv.UID))
 
-			if err := oc.pluginHooks.DeleteServiceRules(serv); err != nil {
+			if err := oc.DeleteServiceRules(serv); err != nil {
 				log.Error(err)
 			}
 		}

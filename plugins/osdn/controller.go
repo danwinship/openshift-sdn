@@ -127,7 +127,7 @@ func deleteLocalSubnetRoute(device, localSubnetCIDR string) {
 	glog.Errorf("Timed out looking for %s route for dev %s; if it appears later it will not be deleted.", localSubnetCIDR, device)
 }
 
-func (plugin *ovsPlugin) SetupSDN(localSubnetCIDR, clusterNetworkCIDR, servicesNetworkCIDR string, mtu uint) (bool, error) {
+func (plugin *OsdnController) SetupSDN(localSubnetCIDR, clusterNetworkCIDR, servicesNetworkCIDR string, mtu uint) (bool, error) {
 	_, ipnet, err := net.ParseCIDR(localSubnetCIDR)
 	localSubnetMaskLength, _ := ipnet.Mask.Size()
 	localSubnetGateway := netutils.GenerateDefaultGateway(ipnet).String()
@@ -324,7 +324,7 @@ func (plugin *ovsPlugin) SetupSDN(localSubnetCIDR, clusterNetworkCIDR, servicesN
 	return true, nil
 }
 
-func (plugin *ovsPlugin) AddHostSubnetRules(subnet *osapi.HostSubnet) error {
+func (plugin *OsdnController) AddHostSubnetRules(subnet *osapi.HostSubnet) error {
 	glog.Infof("AddHostSubnetRules for %s", HostSubnetToString(subnet))
 	otx := ovs.NewTransaction(BR)
 
@@ -339,7 +339,7 @@ func (plugin *ovsPlugin) AddHostSubnetRules(subnet *osapi.HostSubnet) error {
 	return nil
 }
 
-func (plugin *ovsPlugin) DeleteHostSubnetRules(subnet *osapi.HostSubnet) error {
+func (plugin *OsdnController) DeleteHostSubnetRules(subnet *osapi.HostSubnet) error {
 	glog.Infof("DeleteHostSubnetRules for %s", HostSubnetToString(subnet))
 
 	otx := ovs.NewTransaction(BR)
@@ -352,7 +352,7 @@ func (plugin *ovsPlugin) DeleteHostSubnetRules(subnet *osapi.HostSubnet) error {
 	return nil
 }
 
-func (plugin *ovsPlugin) AddServiceRules(service *kapi.Service, netID uint) error {
+func (plugin *OsdnController) AddServiceRules(service *kapi.Service, netID uint) error {
 	if !plugin.multitenant {
 		return nil
 	}
@@ -370,7 +370,7 @@ func (plugin *ovsPlugin) AddServiceRules(service *kapi.Service, netID uint) erro
 	return nil
 }
 
-func (plugin *ovsPlugin) DeleteServiceRules(service *kapi.Service) error {
+func (plugin *OsdnController) DeleteServiceRules(service *kapi.Service) error {
 	if !plugin.multitenant {
 		return nil
 	}

@@ -2,7 +2,6 @@ package osdn
 
 import (
 	"fmt"
-	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -12,11 +11,8 @@ import (
 
 	"github.com/openshift/openshift-sdn/plugins/osdn/api"
 
-	osclient "github.com/openshift/origin/pkg/client"
-
 	kapi "k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/resource"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 	kubeletTypes "k8s.io/kubernetes/pkg/kubelet/container"
 	knetwork "k8s.io/kubernetes/pkg/kubelet/network"
 	"k8s.io/kubernetes/pkg/storage"
@@ -28,12 +24,6 @@ const (
 	EgressBandwidthAnnotation  string = "kubernetes.io/egress-bandwidth"
 	AssignMacVlanAnnotation    string = "pod.network.openshift.io/assign-macvlan"
 )
-
-type ovsPlugin struct {
-	OsdnController
-
-	multitenant bool
-}
 
 func IsOpenShiftNetworkPlugin(pluginName string) bool {
 	switch strings.ToLower(pluginName) {
@@ -50,76 +40,6 @@ func IsOpenShiftMultitenantNetworkPlugin(pluginName string) bool {
 	return false
 }
 
-// Called by higher layers to create the plugin SDN master instance
-func NewMasterPlugin(pluginName string, osClient *osclient.Client, kClient *kclient.Client, etcdHelper storage.Interface) (api.OsdnPlugin, error) {
-	if !IsOpenShiftNetworkPlugin(pluginName) {
-		return nil, nil
-	}
-	return createPlugin(osClient, kClient, etcdHelper, pluginName, "", "", 0)
-}
-
-// Called by higher layers to create the plugin SDN node instance
-func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient *kclient.Client, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
-	if !IsOpenShiftNetworkPlugin(pluginName) {
-		return nil, nil
-	}
-	return createPlugin(osClient, kClient, nil, pluginName, hostname, selfIP, iptablesSyncPeriod)
-}
-
-func createPlugin(osClient *osclient.Client, kClient *kclient.Client, etcdHelper storage.Interface, pluginName string, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
-	registry := NewRegistry(osClient, kClient)
-	plugin := &ovsPlugin{multitenant: IsOpenShiftMultitenantNetworkPlugin(pluginName)}
-
-	err := plugin.BaseInit(registry, plugin, etcdHelper, pluginName, hostname, selfIP, iptablesSyncPeriod)
-	if err != nil {
-		return nil, err
-	}
-
-	return plugin, err
-}
-
-func (plugin *ovsPlugin) PluginStartMaster(clusterNetwork *net.IPNet, hostSubnetLength uint) error {
-	if err := plugin.SubnetStartMaster(clusterNetwork, hostSubnetLength); err != nil {
-		return err
-	}
-
-	if plugin.multitenant {
-		if err := plugin.VnidStartMaster(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (plugin *ovsPlugin) PluginStartNode(mtu uint) error {
-	networkChanged, err := plugin.SubnetStartNode(mtu)
-	if err != nil {
-		return err
-	}
-
-	if plugin.multitenant {
-		if err := plugin.VnidStartNode(); err != nil {
-			return err
-		}
-	}
-
-	if networkChanged {
-		pods, err := plugin.GetLocalPods(kapi.NamespaceAll)
-		if err != nil {
-			return err
-		}
-		for _, p := range pods {
-			containerID := GetPodContainerID(&p)
-			err = plugin.UpdatePod(p.Namespace, p.Name, kubeletTypes.DockerID(containerID))
-			if err != nil {
-				glog.Warningf("Could not update pod %q (%s): %s", p.Name, containerID, err)
-			}
-		}
-	}
-
-	return nil
-}
-
 //-----------------------------------------------
 
 const (
@@ -129,15 +49,15 @@ const (
 	updateCmd   = "update"
 )
 
-func (plugin *ovsPlugin) getExecutable() string {
+func (plugin *OsdnController) getExecutable() string {
 	return "openshift-sdn-ovs"
 }
 
-func (plugin *ovsPlugin) Init(host knetwork.Host) error {
+func (plugin *OsdnController) Init(host knetwork.Host) error {
 	return nil
 }
 
-func (plugin *ovsPlugin) Name() string {
+func (plugin *OsdnController) Name() string {
 	if plugin.multitenant {
 		return api.MultiTenantPluginName
 	} else {
@@ -145,11 +65,11 @@ func (plugin *ovsPlugin) Name() string {
 	}
 }
 
-func (plugin *ovsPlugin) Capabilities() utilsets.Int {
+func (plugin *OsdnController) Capabilities() utilsets.Int {
 	return utilsets.NewInt(knetwork.NET_PLUGIN_CAPABILITY_SHAPING)
 }
 
-func (plugin *ovsPlugin) getVNID(namespace string) (string, error) {
+func (plugin *OsdnController) getVNID(namespace string) (string, error) {
 	if plugin.multitenant {
 		vnid, err := plugin.WaitAndGetVNID(namespace)
 		if err != nil {
@@ -233,7 +153,7 @@ func getScriptError(output []byte) string {
 	return string(output)
 }
 
-func (plugin *ovsPlugin) SetUpPod(namespace string, name string, id kubeletTypes.DockerID) error {
+func (plugin *OsdnController) SetUpPod(namespace string, name string, id kubeletTypes.DockerID) error {
 	err := plugin.WaitForPodNetworkReady()
 	if err != nil {
 		return err
@@ -278,7 +198,7 @@ func (plugin *ovsPlugin) SetUpPod(namespace string, name string, id kubeletTypes
 	}
 }
 
-func (plugin *ovsPlugin) TearDownPod(namespace string, name string, id kubeletTypes.DockerID) error {
+func (plugin *OsdnController) TearDownPod(namespace string, name string, id kubeletTypes.DockerID) error {
 	// The script's teardown functionality doesn't need the VNID
 	out, err := exec.Command(plugin.getExecutable(), tearDownCmd, string(id), "-1", "-1", "-1").CombinedOutput()
 	glog.V(5).Infof("TearDownPod network plugin output: %s, %v", string(out), err)
@@ -290,11 +210,11 @@ func (plugin *ovsPlugin) TearDownPod(namespace string, name string, id kubeletTy
 	}
 }
 
-func (plugin *ovsPlugin) Status(namespace string, name string, id kubeletTypes.DockerID) (*knetwork.PodNetworkStatus, error) {
+func (plugin *OsdnController) Status(namespace string, name string, id kubeletTypes.DockerID) (*knetwork.PodNetworkStatus, error) {
 	return nil, nil
 }
 
-func (plugin *ovsPlugin) UpdatePod(namespace string, name string, id kubeletTypes.DockerID) error {
+func (plugin *OsdnController) UpdatePod(namespace string, name string, id kubeletTypes.DockerID) error {
 	vnidstr, err := plugin.getVNID(namespace)
 	if err != nil {
 		return err
@@ -310,5 +230,5 @@ func (plugin *ovsPlugin) UpdatePod(namespace string, name string, id kubeletType
 	}
 }
 
-func (plugin *ovsPlugin) Event(name string, details map[string]interface{}) {
+func (plugin *OsdnController) Event(name string, details map[string]interface{}) {
 }

@@ -112,7 +112,7 @@ func (oc *OsdnController) SubnetStartNode(mtu uint) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	networkChanged, err := oc.pluginHooks.SetupSDN(oc.localSubnet.Subnet, ni.ClusterNetwork.String(), ni.ServiceNetwork.String(), mtu)
+	networkChanged, err := oc.SetupSDN(oc.localSubnet.Subnet, ni.ClusterNetwork.String(), ni.ServiceNetwork.String(), mtu)
 	if err != nil {
 		return false, err
 	}
@@ -234,7 +234,7 @@ func (oc *OsdnController) watchSubnets() {
 				continue
 			}
 
-			if err := oc.pluginHooks.AddHostSubnetRules(hs); err != nil {
+			if err := oc.AddHostSubnetRules(hs); err != nil {
 				log.Error(err)
 				continue
 			}
@@ -242,7 +242,7 @@ func (oc *OsdnController) watchSubnets() {
 		case watch.Deleted:
 			delete(subnets, string(hs.UID))
 
-			if err := oc.pluginHooks.DeleteHostSubnetRules(hs); err != nil {
+			if err := oc.DeleteHostSubnetRules(hs); err != nil {
 				log.Error(err)
 			}
 		}

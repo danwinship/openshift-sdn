@@ -10,33 +10,21 @@ import (
 	log "github.com/golang/glog"
 
 	"github.com/openshift/openshift-sdn/pkg/netutils"
+	"github.com/openshift/openshift-sdn/plugins/osdn/api"
+
+	osclient "github.com/openshift/origin/pkg/client"
 	osapi "github.com/openshift/origin/pkg/sdn/api"
 
 	kapi "k8s.io/kubernetes/pkg/api"
-	kubetypes "k8s.io/kubernetes/pkg/kubelet/container"
+	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	kubeletTypes "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/storage"
 	kerrors "k8s.io/kubernetes/pkg/util/errors"
 	kexec "k8s.io/kubernetes/pkg/util/exec"
 	kubeutilnet "k8s.io/kubernetes/pkg/util/net"
 )
 
-type PluginHooks interface {
-	PluginStartMaster(clusterNetwork *net.IPNet, hostSubnetLength uint) error
-	PluginStartNode(mtu uint) error
-
-	SetupSDN(localSubnetCIDR, clusterNetworkCIDR, serviceNetworkCIDR string, mtu uint) (bool, error)
-
-	AddHostSubnetRules(subnet *osapi.HostSubnet) error
-	DeleteHostSubnetRules(subnet *osapi.HostSubnet) error
-
-	AddServiceRules(service *kapi.Service, netID uint) error
-	DeleteServiceRules(service *kapi.Service) error
-
-	UpdatePod(namespace string, name string, id kubetypes.DockerID) error
-}
-
 type OsdnController struct {
-	pluginHooks        PluginHooks
 	pluginName         string
 	Registry           *Registry
 	localIP            string
@@ -50,15 +38,29 @@ type OsdnController struct {
 	EtcdHelper         storage.Interface
 }
 
-// Called by plug factory functions to initialize the generic plugin instance
-func (oc *OsdnController) BaseInit(registry *Registry, pluginHooks PluginHooks, etcdHelper storage.Interface, pluginName string, hostname string, selfIP string, iptablesSyncPeriod time.Duration) error {
+// Called by higher layers to create the plugin SDN master instance
+func NewMasterPlugin(pluginName string, osClient *osclient.Client, kClient *kclient.Client, etcdHelper storage.Interface) (api.OsdnPlugin, error) {
+	if !IsOpenShiftNetworkPlugin(pluginName) {
+		return nil, nil
+	}
+	return createPlugin(osClient, kClient, etcdHelper, pluginName, "", "", 0)
+}
 
-	log.Infof("Starting with configured hostname %q (IP %q), iptables sync period %q", hostname, selfIP, iptablesSyncPeriod.String())
+// Called by higher layers to create the plugin SDN node instance
+func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient *kclient.Client, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
+	if !IsOpenShiftNetworkPlugin(pluginName) {
+		return nil, nil
+	}
+	return createPlugin(osClient, kClient, nil, pluginName, hostname, selfIP, iptablesSyncPeriod)
+}
+
+func createPlugin(osClient *osclient.Client, kClient *kclient.Client, etcdHelper storage.Interface, pluginName string, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
+	log.Infof("Starting with configured hostname '%s' (IP '%s')", hostname, selfIP)
 
 	if hostname == "" {
 		output, err := kexec.New().Command("uname", "-n").CombinedOutput()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		hostname = strings.TrimSpace(string(output))
 	}
@@ -70,24 +72,25 @@ func (oc *OsdnController) BaseInit(registry *Registry, pluginHooks PluginHooks, 
 			log.V(5).Infof("Failed to determine node address from hostname %s; using default interface (%v)", hostname, err)
 			defaultIP, err := kubeutilnet.ChooseHostInterface()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			selfIP = defaultIP.String()
 		}
 	}
 	log.Infof("Initializing %s plugin for %s (%s)", pluginName, hostname, selfIP)
 
-	oc.pluginHooks = pluginHooks
-	oc.pluginName = pluginName
-	oc.Registry = registry
-	oc.localIP = selfIP
-	oc.HostName = hostname
-	oc.vnidMap = make(map[string]uint)
-	oc.podNetworkReady = make(chan struct{})
-	oc.iptablesSyncPeriod = iptablesSyncPeriod
-	oc.EtcdHelper = etcdHelper
-
-	return nil
+	plugin := &OsdnController{
+		pluginName:         pluginName,
+		Registry:           NewRegistry(osClient, kClient),
+		EtcdHelper:         etcdHelper,
+		localIP:            selfIP,
+		HostName:           hostname,
+		iptablesSyncPeriod: iptablesSyncPeriod,
+		vnidMap:            make(map[string]uint),
+		podNetworkReady:    make(chan struct{}),
+		adminNamespaces:    make([]string, 0),
+	}
+	return plugin, nil
 }
 
 func (oc *OsdnController) validateNetworkConfig(ni *NetworkInfo) error {
@@ -182,9 +185,16 @@ func (oc *OsdnController) StartMaster(clusterNetworkCIDR string, clusterBitsPerS
 		}
 	}
 
-	if err := oc.pluginHooks.PluginStartMaster(ni.ClusterNetwork, clusterBitsPerSubnet); err != nil {
-		return fmt.Errorf("Failed to start plugin: %v", err)
+	if err := oc.SubnetStartMaster(ni.ClusterNetwork, clusterBitsPerSubnet); err != nil {
+		return err
 	}
+
+	if IsOpenShiftMultitenantNetworkPlugin(oc.pluginName) {
+		if err := oc.VnidStartMaster(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -200,8 +210,36 @@ func (oc *OsdnController) StartNode(mtu uint) error {
 		return fmt.Errorf("Failed to set up iptables: %v", err)
 	}
 
-	if err := oc.pluginHooks.PluginStartNode(mtu); err != nil {
-		return fmt.Errorf("Failed to start plugin: %v", err)
+	ipt.AddReloadFunc(func() {
+		err := SetupIptables(ipt, clusterNetwork.String())
+		if err != nil {
+			log.Errorf("Error reloading iptables: %v\n", err)
+		}
+	})
+
+	networkChanged, err := oc.SubnetStartNode(mtu)
+	if err != nil {
+		return err
+	}
+
+	if IsOpenShiftMultitenantNetworkPlugin(oc.pluginName) {
+		if err := oc.VnidStartNode(); err != nil {
+			return err
+		}
+	}
+
+	if networkChanged {
+		pods, err := oc.GetLocalPods(kapi.NamespaceAll)
+		if err != nil {
+			return err
+		}
+		for _, p := range pods {
+			containerID := GetPodContainerID(&p)
+			err = oc.UpdatePod(p.Namespace, p.Name, kubeletTypes.DockerID(containerID))
+			if err != nil {
+				log.Warningf("Could not update pod %q (%s): %s", p.Name, containerID, err)
+			}
+		}
 	}
 
 	oc.markPodNetworkReady()
