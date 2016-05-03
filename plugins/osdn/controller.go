@@ -1,4 +1,4 @@
-package ovs
+package osdn
 
 import (
 	"fmt"
@@ -12,7 +12,6 @@ import (
 	"github.com/openshift/openshift-sdn/pkg/ipcmd"
 	"github.com/openshift/openshift-sdn/pkg/netutils"
 	"github.com/openshift/openshift-sdn/pkg/ovs"
-	"github.com/openshift/openshift-sdn/plugins/osdn"
 	osapi "github.com/openshift/origin/pkg/sdn/api"
 
 	kapi "k8s.io/kubernetes/pkg/api"
@@ -326,7 +325,7 @@ func (plugin *ovsPlugin) SetupSDN(localSubnetCIDR, clusterNetworkCIDR, servicesN
 }
 
 func (plugin *ovsPlugin) AddHostSubnetRules(subnet *osapi.HostSubnet) error {
-	glog.Infof("AddHostSubnetRules for %s", osdn.HostSubnetToString(subnet))
+	glog.Infof("AddHostSubnetRules for %s", HostSubnetToString(subnet))
 	otx := ovs.NewTransaction(BR)
 
 	otx.AddFlow("table=1, priority=100, tun_src=%s, actions=goto_table:5", subnet.HostIP)
@@ -341,7 +340,7 @@ func (plugin *ovsPlugin) AddHostSubnetRules(subnet *osapi.HostSubnet) error {
 }
 
 func (plugin *ovsPlugin) DeleteHostSubnetRules(subnet *osapi.HostSubnet) error {
-	glog.Infof("DeleteHostSubnetRules for %s", osdn.HostSubnetToString(subnet))
+	glog.Infof("DeleteHostSubnetRules for %s", HostSubnetToString(subnet))
 
 	otx := ovs.NewTransaction(BR)
 	otx.DeleteFlows("table=1, tun_src=%s", subnet.HostIP)

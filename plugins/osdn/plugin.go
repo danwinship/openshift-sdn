@@ -1,4 +1,4 @@
-package ovs
+package osdn
 
 import (
 	"fmt"
@@ -10,7 +10,6 @@ import (
 
 	"github.com/golang/glog"
 
-	"github.com/openshift/openshift-sdn/plugins/osdn"
 	"github.com/openshift/openshift-sdn/plugins/osdn/api"
 
 	kapi "k8s.io/kubernetes/pkg/api"
@@ -28,7 +27,7 @@ const (
 )
 
 type ovsPlugin struct {
-	osdn.OsdnController
+	OsdnController
 
 	multitenant bool
 }
@@ -48,7 +47,7 @@ func IsOpenShiftMultitenantNetworkPlugin(pluginName string) bool {
 	return false
 }
 
-func CreatePlugin(registry *osdn.Registry, etcdHelper storage.Interface, pluginName string, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
+func CreatePlugin(registry *Registry, etcdHelper storage.Interface, pluginName string, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
 	plugin := &ovsPlugin{multitenant: IsOpenShiftMultitenantNetworkPlugin(pluginName)}
 
 	err := plugin.BaseInit(registry, plugin, etcdHelper, pluginName, hostname, selfIP, iptablesSyncPeriod)
@@ -90,7 +89,7 @@ func (plugin *ovsPlugin) PluginStartNode(mtu uint) error {
 			return err
 		}
 		for _, p := range pods {
-			containerID := osdn.GetPodContainerID(&p)
+			containerID := GetPodContainerID(&p)
 			err = plugin.UpdatePod(p.Namespace, p.Name, kubeletTypes.DockerID(containerID))
 			if err != nil {
 				glog.Warningf("Could not update pod %q (%s): %s", p.Name, containerID, err)
