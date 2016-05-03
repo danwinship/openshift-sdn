@@ -28,7 +28,7 @@ import (
 	"github.com/openshift/origin/pkg/sdn/registry/netnamespace"
 )
 
-func (oc *OsdnMaster) VnidStartMaster() error {
+func (master *OsdnMaster) VnidStartMaster() error {
 	netIDRange, err := vnid.NewVNIDRange(netid.MinVNID, netid.MaxVNID-netid.MinVNID+1)
 	if err != nil {
 		return fmt.Errorf("Unable to create NetID range: %v", err)
@@ -37,14 +37,14 @@ func (oc *OsdnMaster) VnidStartMaster() error {
 	var etcdAlloc *etcdallocator.Etcd
 	netIDAllocator := vnidallocator.New(netIDRange, func(max int, rangeSpec string) allocator.Interface {
 		mem := allocator.NewContiguousAllocationMap(max, rangeSpec)
-		etcdAlloc = etcdallocator.NewEtcd(mem, "/ranges/namespacevnids", kapi.Resource("namespacevnidallocation"), oc.EtcdHelper)
+		etcdAlloc = etcdallocator.NewEtcd(mem, "/ranges/namespacevnids", kapi.Resource("namespacevnidallocation"), master.etcdHelper)
 		return etcdAlloc
 	})
 
-	_, kclient := oc.Registry.GetSDNClients()
+	_, kclient := master.registry.GetSDNClients()
 
 	// Run vnid migration
-	migrate := netnamespace.NewMigrate(oc.EtcdHelper, kclient.Namespaces())
+	migrate := netnamespace.NewMigrate(master.etcdHelper, kclient.Namespaces())
 	if err := migrate.Run(); err != nil {
 		return fmt.Errorf("Unable to migrate network namespaces: %v, please retry", err)
 	}

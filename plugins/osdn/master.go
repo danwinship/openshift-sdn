@@ -1,0 +1,139 @@
+package osdn
+
+import (
+	"fmt"
+	"net"
+
+	log "github.com/golang/glog"
+
+	"github.com/openshift/openshift-sdn/pkg/netutils"
+
+	osclient "github.com/openshift/origin/pkg/client"
+	osconfigapi "github.com/openshift/origin/pkg/cmd/server/api"
+
+	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	kstorage "k8s.io/kubernetes/pkg/storage"
+	kerrors "k8s.io/kubernetes/pkg/util/errors"
+)
+
+type OsdnMaster struct {
+	registry        *Registry
+	etcdHelper      kstorage.Interface
+	subnetAllocator *netutils.SubnetAllocator
+}
+
+func StartMaster(networkConfig osconfigapi.MasterNetworkConfig, osClient *osclient.Client, kClient *kclient.Client, etcdHelper kstorage.Interface) error {
+	if !IsOpenShiftNetworkPlugin(networkConfig.NetworkPluginName) {
+		return nil
+	}
+
+	log.Infof("Initializing SDN master of type %q", networkConfig.NetworkPluginName)
+	master := &OsdnMaster{
+		registry:        NewRegistry(osClient, kClient),
+		etcdHelper:      etcdHelper,
+		adminNamespaces: make([]string, 0),
+	}
+
+	// Validate command-line/config parameters
+	ni, err := ValidateClusterNetwork(networkConfig.ClusterNetworkCIDR, int(networkConfig.HostSubnetLength), networkConfig.ServiceNetworkCIDR, networkConfig.NetworkPluginName)
+	if err != nil {
+		return err
+	}
+
+	changed, net_err := master.isClusterNetworkChanged(ni)
+	if changed {
+		if err := master.validateNetworkConfig(ni); err != nil {
+			return err
+		}
+		if err := master.registry.UpdateClusterNetwork(ni); err != nil {
+			return err
+		}
+	} else if net_err != nil {
+		if err := master.registry.CreateClusterNetwork(ni); err != nil {
+			return err
+		}
+	}
+
+	if err := master.SubnetStartMaster(ni.ClusterNetwork, networkConfig.HostSubnetLength); err != nil {
+		return err
+	}
+
+	if IsOpenShiftMultitenantNetworkPlugin(networkConfig.NetworkPluginName) {
+		if err := master.VnidStartMaster(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (master *OsdnMaster) validateNetworkConfig(ni *NetworkInfo) error {
+	// TODO: Instead of hardcoding 'tun0' and 'lbr0', get it from common place.
+	// This will ensure both the kube/multitenant scripts and master validations use the same name.
+	hostIPNets, err := netutils.GetHostIPNetworks([]string{"tun0", "lbr0"})
+	if err != nil {
+		return err
+	}
+
+	errList := []error{}
+
+	// Ensure cluster and service network don't overlap with host networks
+	for _, ipNet := range hostIPNets {
+		if ipNet.Contains(ni.ClusterNetwork.IP) {
+			errList = append(errList, fmt.Errorf("Error: Cluster IP: %s conflicts with host network: %s", ni.ClusterNetwork.IP.String(), ipNet.String()))
+		}
+		if ni.ClusterNetwork.Contains(ipNet.IP) {
+			errList = append(errList, fmt.Errorf("Error: Host network with IP: %s conflicts with cluster network: %s", ipNet.IP.String(), ni.ClusterNetwork.String()))
+		}
+		if ipNet.Contains(ni.ServiceNetwork.IP) {
+			errList = append(errList, fmt.Errorf("Error: Service IP: %s conflicts with host network: %s", ni.ServiceNetwork.String(), ipNet.String()))
+		}
+		if ni.ServiceNetwork.Contains(ipNet.IP) {
+			errList = append(errList, fmt.Errorf("Error: Host network with IP: %s conflicts with service network: %s", ipNet.IP.String(), ni.ServiceNetwork.String()))
+		}
+	}
+
+	// Ensure each host subnet is within the cluster network
+	subnets, err := master.registry.GetSubnets()
+	if err != nil {
+		return fmt.Errorf("Error in initializing/fetching subnets: %v", err)
+	}
+	for _, sub := range subnets {
+		subnetIP, _, err := net.ParseCIDR(sub.Subnet)
+		if err != nil {
+			errList = append(errList, fmt.Errorf("Failed to parse network address: %s", sub.Subnet))
+			continue
+		}
+		if !ni.ClusterNetwork.Contains(subnetIP) {
+			errList = append(errList, fmt.Errorf("Error: Existing node subnet: %s is not part of cluster network: %s", sub.Subnet, ni.ClusterNetwork.String()))
+		}
+	}
+
+	// Ensure each service is within the services network
+	services, err := master.registry.GetServices()
+	if err != nil {
+		return err
+	}
+	for _, svc := range services {
+		if !ni.ServiceNetwork.Contains(net.ParseIP(svc.Spec.ClusterIP)) {
+			errList = append(errList, fmt.Errorf("Error: Existing service with IP: %s is not part of service network: %s", svc.Spec.ClusterIP, ni.ServiceNetwork.String()))
+		}
+	}
+
+	return kerrors.NewAggregate(errList)
+}
+
+func (master *OsdnMaster) isClusterNetworkChanged(curNetwork *NetworkInfo) (bool, error) {
+	oldNetwork, err := master.registry.GetNetworkInfo()
+	if err != nil {
+		return false, err
+	}
+
+	if curNetwork.ClusterNetwork.String() != oldNetwork.ClusterNetwork.String() ||
+		curNetwork.HostSubnetLength != oldNetwork.HostSubnetLength ||
+		curNetwork.ServiceNetwork.String() != oldNetwork.ServiceNetwork.String() ||
+		curNetwork.PluginName != oldNetwork.PluginName {
+		return true, nil
+	}
+	return false, nil
+}
