@@ -12,8 +12,11 @@ import (
 
 	"github.com/openshift/openshift-sdn/plugins/osdn/api"
 
+	osclient "github.com/openshift/origin/pkg/client"
+
 	kapi "k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/resource"
+	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 	kubeletTypes "k8s.io/kubernetes/pkg/kubelet/container"
 	knetwork "k8s.io/kubernetes/pkg/kubelet/network"
 	"k8s.io/kubernetes/pkg/storage"
@@ -47,7 +50,24 @@ func IsOpenShiftMultitenantNetworkPlugin(pluginName string) bool {
 	return false
 }
 
-func CreatePlugin(registry *Registry, etcdHelper storage.Interface, pluginName string, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
+// Called by higher layers to create the plugin SDN master instance
+func NewMasterPlugin(pluginName string, osClient *osclient.Client, kClient *kclient.Client, etcdHelper storage.Interface) (api.OsdnPlugin, error) {
+	if !IsOpenShiftNetworkPlugin(pluginName) {
+		return nil, nil
+	}
+	return createPlugin(osClient, kClient, etcdHelper, pluginName, "", "", 0)
+}
+
+// Called by higher layers to create the plugin SDN node instance
+func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient *kclient.Client, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
+	if !IsOpenShiftNetworkPlugin(pluginName) {
+		return nil, nil
+	}
+	return createPlugin(osClient, kClient, nil, pluginName, hostname, selfIP, iptablesSyncPeriod)
+}
+
+func createPlugin(osClient *osclient.Client, kClient *kclient.Client, etcdHelper storage.Interface, pluginName string, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
+	registry := NewRegistry(osClient, kClient)
 	plugin := &ovsPlugin{multitenant: IsOpenShiftMultitenantNetworkPlugin(pluginName)}
 
 	err := plugin.BaseInit(registry, plugin, etcdHelper, pluginName, hostname, selfIP, iptablesSyncPeriod)
