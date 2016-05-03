@@ -279,3 +279,27 @@ func (registry *Registry) RunEventQueue(resourceName ResourceName) *oscache.Even
 func clusterNetworkToString(n *osapi.ClusterNetwork) string {
 	return fmt.Sprintf("%s (network: %q, hostSubnetBits: %d, serviceNetwork: %q, pluginName: %q)", n.Name, n.Network, n.HostSubnetLength, n.ServiceNetwork, n.PluginName)
 }
+
+func (registry *Registry) ValidateNodeIP(nodeIP string) error {
+	if nodeIP == "" || nodeIP == "127.0.0.1" {
+		return fmt.Errorf("Invalid node IP %q", nodeIP)
+	}
+
+	ni, err := oc.Registry.GetNetworkInfo()
+	if err != nil {
+		return fmt.Errorf("Failed to get network information: %v", err)
+	}
+
+	// Ensure each node's NodeIP is not contained by the cluster network,
+	// which could cause a routing loop. (rhbz#1295486)
+	ipaddr := net.ParseIP(nodeIP)
+	if ipaddr == nil {
+		return fmt.Errorf("Failed to parse node IP %s", nodeIP)
+	}
+
+	if ni.ClusterNetwork.Contains(ipaddr) {
+		return fmt.Errorf("Node IP %s conflicts with cluster network %s", nodeIP, ni.ClusterNetwork.String())
+	}
+
+	return nil
+}

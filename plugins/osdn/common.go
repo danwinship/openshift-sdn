@@ -24,18 +24,23 @@ import (
 	kubeutilnet "k8s.io/kubernetes/pkg/util/net"
 )
 
-type OsdnController struct {
+type OsdnMaster struct {
+	pluginName      string
+	Registry        *Registry
+	EtcdHelper      storage.Interface
+	subnetAllocator *netutils.SubnetAllocator
+}
+
+type OsdnNode struct {
 	pluginName         string
 	Registry           *Registry
 	localIP            string
 	localSubnet        *osapi.HostSubnet
 	HostName           string
-	subnetAllocator    *netutils.SubnetAllocator
 	podNetworkReady    chan struct{}
 	vnidMap            map[string]uint
 	vnidLock           sync.Mutex
 	iptablesSyncPeriod time.Duration
-	EtcdHelper         storage.Interface
 }
 
 // Called by higher layers to create the plugin SDN master instance
@@ -43,7 +48,13 @@ func NewMasterPlugin(pluginName string, osClient *osclient.Client, kClient *kcli
 	if !IsOpenShiftNetworkPlugin(pluginName) {
 		return nil, nil
 	}
-	return createPlugin(osClient, kClient, etcdHelper, pluginName, "", "", 0)
+	log.Infof("Initializing SDN master of type %q", pluginType)
+	plugin := &OsdnMaster{
+		pluginName: pluginName,
+		Registry:   NewRegistry(osClient, kClient),
+		EtcdHelper: etcdHelper,
+	}
+	return plugin, nil
 }
 
 // Called by higher layers to create the plugin SDN node instance
@@ -51,10 +62,6 @@ func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient *kclien
 	if !IsOpenShiftNetworkPlugin(pluginName) {
 		return nil, nil
 	}
-	return createPlugin(osClient, kClient, nil, pluginName, hostname, selfIP, iptablesSyncPeriod)
-}
-
-func createPlugin(osClient *osclient.Client, kClient *kclient.Client, etcdHelper storage.Interface, pluginName string, hostname string, selfIP string, iptablesSyncPeriod time.Duration) (api.OsdnPlugin, error) {
 	log.Infof("Starting with configured hostname '%s' (IP '%s')", hostname, selfIP)
 
 	if hostname == "" {
@@ -79,21 +86,19 @@ func createPlugin(osClient *osclient.Client, kClient *kclient.Client, etcdHelper
 	}
 	log.Infof("Initializing %s plugin for %s (%s)", pluginName, hostname, selfIP)
 
-	plugin := &OsdnController{
+	plugin := &OsdnNode{
 		pluginName:         pluginName,
 		Registry:           NewRegistry(osClient, kClient),
-		EtcdHelper:         etcdHelper,
 		localIP:            selfIP,
 		HostName:           hostname,
 		iptablesSyncPeriod: iptablesSyncPeriod,
 		vnidMap:            make(map[string]uint),
 		podNetworkReady:    make(chan struct{}),
-		adminNamespaces:    make([]string, 0),
 	}
 	return plugin, nil
 }
 
-func (oc *OsdnController) validateNetworkConfig(ni *NetworkInfo) error {
+func (oc *OsdnMaster) validateNetworkConfig(ni *NetworkInfo) error {
 	// TODO: Instead of hardcoding 'tun0' and 'lbr0', get it from common place.
 	// This will ensure both the kube/multitenant scripts and master validations use the same name.
 	hostIPNets, err := netutils.GetHostIPNetworks([]string{"tun0", "lbr0"})
@@ -149,7 +154,7 @@ func (oc *OsdnController) validateNetworkConfig(ni *NetworkInfo) error {
 	return kerrors.NewAggregate(errList)
 }
 
-func (oc *OsdnController) isClusterNetworkChanged(curNetwork *NetworkInfo) (bool, error) {
+func (oc *OsdnMaster) isClusterNetworkChanged(curNetwork *NetworkInfo) (bool, error) {
 	oldNetwork, err := oc.Registry.GetNetworkInfo()
 	if err != nil {
 		return false, err
@@ -164,7 +169,7 @@ func (oc *OsdnController) isClusterNetworkChanged(curNetwork *NetworkInfo) (bool
 	return false, nil
 }
 
-func (oc *OsdnController) StartMaster(clusterNetworkCIDR string, clusterBitsPerSubnet uint, serviceNetworkCIDR string) error {
+func (oc *OsdnMaster) Start(clusterNetworkCIDR string, clusterBitsPerSubnet uint, serviceNetworkCIDR string) error {
 	// Validate command-line/config parameters
 	ni, err := ValidateClusterNetwork(clusterNetworkCIDR, int(clusterBitsPerSubnet), serviceNetworkCIDR, oc.pluginName)
 	if err != nil {
@@ -198,7 +203,7 @@ func (oc *OsdnController) StartMaster(clusterNetworkCIDR string, clusterBitsPerS
 	return nil
 }
 
-func (oc *OsdnController) StartNode(mtu uint) error {
+func (oc *OsdnNode) Start(mtu uint) error {
 	// Assume we are working with IPv4
 	ni, err := oc.Registry.GetNetworkInfo()
 	if err != nil {
@@ -247,15 +252,15 @@ func (oc *OsdnController) StartNode(mtu uint) error {
 	return nil
 }
 
-func (oc *OsdnController) GetLocalPods(namespace string) ([]kapi.Pod, error) {
+func (oc *OsdnNode) GetLocalPods(namespace string) ([]kapi.Pod, error) {
 	return oc.Registry.GetRunningPods(oc.HostName, namespace)
 }
 
-func (oc *OsdnController) markPodNetworkReady() {
+func (oc *OsdnNode) markPodNetworkReady() {
 	close(oc.podNetworkReady)
 }
 
-func (oc *OsdnController) WaitForPodNetworkReady() error {
+func (oc *OsdnNode) WaitForPodNetworkReady() error {
 	logInterval := 10 * time.Second
 	numIntervals := 12 // timeout: 2 mins
 

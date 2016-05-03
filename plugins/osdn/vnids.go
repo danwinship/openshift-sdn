@@ -28,7 +28,7 @@ import (
 	"github.com/openshift/origin/pkg/sdn/registry/netnamespace"
 )
 
-func (oc *OsdnController) VnidStartMaster() error {
+func (oc *OsdnMaster) VnidStartMaster() error {
 	netIDRange, err := vnid.NewVNIDRange(netid.MinVNID, netid.MaxVNID-netid.MinVNID+1)
 	if err != nil {
 		return fmt.Errorf("Unable to create NetID range: %v", err)
@@ -65,7 +65,7 @@ func (oc *OsdnController) VnidStartMaster() error {
 	return nil
 }
 
-func (oc *OsdnController) GetVNID(name string) (uint, error) {
+func (oc *OsdnNode) GetVNID(name string) (uint, error) {
 	oc.vnidLock.Lock()
 	defer oc.vnidLock.Unlock()
 
@@ -81,7 +81,7 @@ func (oc *OsdnController) GetVNID(name string) (uint, error) {
 // and if service/pod-setup tries to lookup vnid map then it may fail.
 // So, use this method to alleviate this problem. This method will
 // retry vnid lookup before giving up.
-func (oc *OsdnController) WaitAndGetVNID(name string) (uint, error) {
+func (oc *OsdnNode) WaitAndGetVNID(name string) (uint, error) {
 	// Try few times up to 2 seconds
 	retries := 20
 	retryInterval := 100 * time.Millisecond
@@ -95,7 +95,7 @@ func (oc *OsdnController) WaitAndGetVNID(name string) (uint, error) {
 	return 0, fmt.Errorf("Failed to find netid for namespace: %s in vnid map", name)
 }
 
-func (oc *OsdnController) setVNID(name string, id uint) {
+func (oc *OsdnNode) setVNID(name string, id uint) {
 	oc.vnidLock.Lock()
 	defer oc.vnidLock.Unlock()
 
@@ -103,7 +103,7 @@ func (oc *OsdnController) setVNID(name string, id uint) {
 	log.Infof("Associate netid %d to namespace %q", id, name)
 }
 
-func (oc *OsdnController) unSetVNID(name string) (id uint, err error) {
+func (oc *OsdnNode) unSetVNID(name string) (id uint, err error) {
 	oc.vnidLock.Lock()
 	defer oc.vnidLock.Unlock()
 
@@ -116,7 +116,7 @@ func (oc *OsdnController) unSetVNID(name string) (id uint, err error) {
 	return id, nil
 }
 
-func populateVNIDMap(oc *OsdnController) error {
+func populateVNIDMap(oc *OsdnNode) error {
 	nsList, err := oc.Registry.GetNamespaces()
 	if err != nil {
 		return err
@@ -135,7 +135,7 @@ func populateVNIDMap(oc *OsdnController) error {
 	return nil
 }
 
-func (oc *OsdnController) VnidStartNode() error {
+func (oc *OsdnNode) VnidStartNode() error {
 	// Populate vnid map synchronously so that existing services can fetch vnid
 	err := populateVNIDMap(oc)
 	if err != nil {
@@ -151,7 +151,7 @@ func (oc *OsdnController) VnidStartNode() error {
 	return nil
 }
 
-func (oc *OsdnController) updatePodNetwork(namespace string, netID uint) error {
+func (oc *OsdnNode) updatePodNetwork(namespace string, netID uint) error {
 	// Update OF rules for the existing/old pods in the namespace
 	pods, err := oc.GetLocalPods(namespace)
 	if err != nil {
@@ -181,7 +181,7 @@ func (oc *OsdnController) updatePodNetwork(namespace string, netID uint) error {
 	return kerrors.NewAggregate(errList)
 }
 
-func (oc *OsdnController) watchNamespaces() {
+func (oc *OsdnNode) watchNamespaces() {
 	eventQueue := oc.Registry.RunEventQueue(Namespaces)
 
 	for {
@@ -239,7 +239,7 @@ func isServiceChanged(oldsvc, newsvc *kapi.Service) bool {
 	return true
 }
 
-func (oc *OsdnController) watchServices() {
+func (oc *OsdnNode) watchServices() {
 	services := make(map[string]*kapi.Service)
 	eventQueue := oc.Registry.RunEventQueue(Services)
 

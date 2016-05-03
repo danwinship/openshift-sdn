@@ -49,15 +49,15 @@ const (
 	updateCmd   = "update"
 )
 
-func (plugin *OsdnController) getExecutable() string {
+func (plugin *OsdnNode) getExecutable() string {
 	return "openshift-sdn-ovs"
 }
 
-func (plugin *OsdnController) Init(host knetwork.Host) error {
+func (plugin *OsdnNode) Init(host knetwork.Host) error {
 	return nil
 }
 
-func (plugin *OsdnController) Name() string {
+func (plugin *OsdnNode) Name() string {
 	if plugin.multitenant {
 		return api.MultiTenantPluginName
 	} else {
@@ -65,11 +65,11 @@ func (plugin *OsdnController) Name() string {
 	}
 }
 
-func (plugin *OsdnController) Capabilities() utilsets.Int {
+func (plugin *OsdnNode) Capabilities() utilsets.Int {
 	return utilsets.NewInt(knetwork.NET_PLUGIN_CAPABILITY_SHAPING)
 }
 
-func (plugin *OsdnController) getVNID(namespace string) (string, error) {
+func (plugin *OsdnNode) getVNID(namespace string) (string, error) {
 	if plugin.multitenant {
 		vnid, err := plugin.WaitAndGetVNID(namespace)
 		if err != nil {
@@ -153,7 +153,7 @@ func getScriptError(output []byte) string {
 	return string(output)
 }
 
-func (plugin *OsdnController) SetUpPod(namespace string, name string, id kubeletTypes.DockerID) error {
+func (plugin *OsdnNode) SetUpPod(namespace string, name string, id kubeletTypes.DockerID) error {
 	err := plugin.WaitForPodNetworkReady()
 	if err != nil {
 		return err
@@ -198,7 +198,7 @@ func (plugin *OsdnController) SetUpPod(namespace string, name string, id kubelet
 	}
 }
 
-func (plugin *OsdnController) TearDownPod(namespace string, name string, id kubeletTypes.DockerID) error {
+func (plugin *OsdnNode) TearDownPod(namespace string, name string, id kubeletTypes.DockerID) error {
 	// The script's teardown functionality doesn't need the VNID
 	out, err := exec.Command(plugin.getExecutable(), tearDownCmd, string(id), "-1", "-1", "-1").CombinedOutput()
 	glog.V(5).Infof("TearDownPod network plugin output: %s, %v", string(out), err)
@@ -210,11 +210,11 @@ func (plugin *OsdnController) TearDownPod(namespace string, name string, id kube
 	}
 }
 
-func (plugin *OsdnController) Status(namespace string, name string, id kubeletTypes.DockerID) (*knetwork.PodNetworkStatus, error) {
+func (plugin *OsdnNode) Status(namespace string, name string, id kubeletTypes.DockerID) (*knetwork.PodNetworkStatus, error) {
 	return nil, nil
 }
 
-func (plugin *OsdnController) UpdatePod(namespace string, name string, id kubeletTypes.DockerID) error {
+func (plugin *OsdnNode) UpdatePod(namespace string, name string, id kubeletTypes.DockerID) error {
 	vnidstr, err := plugin.getVNID(namespace)
 	if err != nil {
 		return err
@@ -230,5 +230,5 @@ func (plugin *OsdnController) UpdatePod(namespace string, name string, id kubele
 	}
 }
 
-func (plugin *OsdnController) Event(name string, details map[string]interface{}) {
+func (plugin *OsdnNode) Event(name string, details map[string]interface{}) {
 }
