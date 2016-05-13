@@ -22,9 +22,6 @@ import (
 )
 
 const (
-	SingleTenantPluginName string = "redhat/openshift-ovs-subnet"
-	MultiTenantPluginName  string = "redhat/openshift-ovs-multitenant"
-
 	IngressBandwidthAnnotation string = "kubernetes.io/ingress-bandwidth"
 	EgressBandwidthAnnotation  string = "kubernetes.io/egress-bandwidth"
 	AssignMacVlanAnnotation    string = "pod.network.openshift.io/assign-macvlan"
@@ -38,14 +35,14 @@ type ovsPlugin struct {
 
 func IsOpenShiftNetworkPlugin(pluginName string) bool {
 	switch strings.ToLower(pluginName) {
-	case SingleTenantPluginName, MultiTenantPluginName:
+	case api.SingleTenantPluginName, api.MultiTenantPluginName:
 		return true
 	}
 	return false
 }
 
 func IsOpenShiftMultitenantNetworkPlugin(pluginName string) bool {
-	if strings.ToLower(pluginName) == MultiTenantPluginName {
+	if strings.ToLower(pluginName) == api.MultiTenantPluginName {
 		return true
 	}
 	return false
@@ -123,9 +120,9 @@ func (plugin *ovsPlugin) Init(host knetwork.Host) error {
 
 func (plugin *ovsPlugin) Name() string {
 	if plugin.multitenant {
-		return MultiTenantPluginName
+		return api.MultiTenantPluginName
 	} else {
-		return SingleTenantPluginName
+		return api.SingleTenantPluginName
 	}
 }
 
