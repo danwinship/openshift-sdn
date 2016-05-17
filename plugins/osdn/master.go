@@ -29,13 +29,13 @@ func StartMaster(networkConfig osconfigapi.MasterNetworkConfig, osClient *osclie
 
 	log.Infof("Initializing SDN master of type %q", networkConfig.NetworkPluginName)
 	master := &OsdnMaster{
-		registry:        NewRegistry(osClient, kClient),
+		registry:        newRegistry(osClient, kClient),
 		etcdHelper:      etcdHelper,
 		adminNamespaces: make([]string, 0),
 	}
 
 	// Validate command-line/config parameters
-	ni, err := ValidateClusterNetwork(networkConfig.ClusterNetworkCIDR, int(networkConfig.HostSubnetLength), networkConfig.ServiceNetworkCIDR, networkConfig.NetworkPluginName)
+	ni, err := validateClusterNetwork(networkConfig.ClusterNetworkCIDR, int(networkConfig.HostSubnetLength), networkConfig.ServiceNetworkCIDR, networkConfig.NetworkPluginName)
 	if err != nil {
 		return err
 	}

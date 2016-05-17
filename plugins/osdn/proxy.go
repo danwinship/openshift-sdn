@@ -32,7 +32,7 @@ type ovsProxyPlugin struct {
 func NewProxyPlugin(pluginName string, osClient *osclient.Client, kClient *kclient.Client) (api.FilteringEndpointsConfigHandler, error) {
 	if IsOpenShiftMultitenantNetworkPlugin(pluginName) {
 		return &ovsProxyPlugin{
-			registry: NewRegistry(osClient, kClient),
+			registry: newRegistry(osClient, kClient),
 			podsByIP: make(map[string]*kapi.Pod),
 		}, nil
 	}

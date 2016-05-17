@@ -69,7 +69,7 @@ func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient *kclien
 
 	plugin := &OsdnNode{
 		pluginName:         pluginName,
-		registry:           NewRegistry(osClient, kClient),
+		registry:           newRegistry(osClient, kClient),
 		localIP:            selfIP,
 		hostName:           hostname,
 		iptablesSyncPeriod: iptablesSyncPeriod,
@@ -93,7 +93,7 @@ func (node *OsdnNode) Start() error {
 	}
 
 	ipt.AddReloadFunc(func() {
-		err := SetupIptables(ipt, clusterNetwork.String())
+		err := setupIptables(ipt, clusterNetwork.String())
 		if err != nil {
 			log.Errorf("Error reloading iptables: %v\n", err)
 		}
@@ -116,7 +116,7 @@ func (node *OsdnNode) Start() error {
 			return err
 		}
 		for _, p := range pods {
-			containerID := GetPodContainerID(&p)
+			containerID := getPodContainerID(&p)
 			err = node.UpdatePod(p.Namespace, p.Name, kubeletTypes.DockerID(containerID))
 			if err != nil {
 				log.Warningf("Could not update pod %q (%s): %s", p.Name, containerID, err)
@@ -159,7 +159,7 @@ type FirewallRule struct {
 	args  []string
 }
 
-func SetupIptables(ipt iptables.Interface, clusterNetworkCIDR string) error {
+func setupIptables(ipt iptables.Interface, clusterNetworkCIDR string) error {
 	rules := []FirewallRule{
 		{"nat", "POSTROUTING", []string{"-s", clusterNetworkCIDR, "!", "-d", clusterNetworkCIDR, "-j", "MASQUERADE"}},
 		{"filter", "INPUT", []string{"-p", "udp", "-m", "multiport", "--dports", "4789", "-m", "comment", "--comment", "001 vxlan incoming", "-j", "ACCEPT"}},
